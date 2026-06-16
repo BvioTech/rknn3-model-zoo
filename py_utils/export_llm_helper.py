@@ -705,6 +705,7 @@ def export_tokenizer(model_path, tokenizer_path):
         tokenizer_path (str): Path to save the exported tokenizer in GGUF format.
     '''
     import subprocess
+    import sys
 
     # remote用于决定是否从远程下载模型文件,如果model_path以'.'、'/'或'~'开头，则remote为0，表示本地文件；否则为1，表示远程文件。
     if model_path.startswith(('.', '/', '~')):
@@ -714,7 +715,8 @@ def export_tokenizer(model_path, tokenizer_path):
 
     # 获取当前文件所在目录
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    CMD="python3 {}/../tokenizer/thirdparty/llama_vocab/convert_hf_to_gguf.py --vocab-only --outtype f16 --outfile {} {} {}".format(current_dir, tokenizer_path, "--remote" if remote == 1 else "", model_path)
+    # NOTE(violoop): 用当前解释器(venv)而非系统 python3，否则子进程缺 transformers 等依赖
+    CMD="{} {}/../tokenizer/thirdparty/llama_vocab/convert_hf_to_gguf.py --vocab-only --outtype f16 --outfile {} {} {}".format(sys.executable, current_dir, tokenizer_path, "--remote" if remote == 1 else "", model_path)
 
     result = subprocess.run(
         CMD,

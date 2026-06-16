@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.Python
+
+# 虚拟环境
+.venv/
+venv/
+env/
+
+# 模型导出 / 转换产物（体积大，不入库）
+examples/**/model/
+*.onnx
+*.rknn
+*.weight
+*.embed.bin
+*.tokenizer.gguf
+*.config.pkl
+
+# RKNN toolkit 构建临时目录与报告
+**/tmp/
+model_report.html
+
+# 量化数据集生成物（由 export_llm.py 自动生成）
+datasets/**/dataset.txt
+datasets/**/dataset_np/
+
+# HuggingFace 缓存（若放在仓库内）
+.cache/
+
+# 编辑器 / 系统
+.DS_Store
+*.swp
