@@ -1,5 +1,8 @@
 import os
-os.environ["HF_ENDPOINT"] = "https://hf-mirror.com/"
+# NOTE(violoop): 不再硬编码 hf-mirror（当前对部分文件 308 跳回 hf.co 导致下载失败）。
+# 需镜像时设环境变量 HF_ENDPOINT（不带结尾斜杠）；否则默认 https://huggingface.co。
+if "HF_ENDPOINT" not in os.environ:
+    pass
 import sys
 import torch
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../..')))

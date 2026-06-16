@@ -6,6 +6,7 @@ __pycache__/
 
 # 虚拟环境
 .venv/
+.venv-vl/
 venv/
 env/
 
@@ -25,6 +26,10 @@ model_report.html
 # 量化数据集生成物（由 export_llm.py 自动生成）
 datasets/**/dataset.txt
 datasets/**/dataset_np/
+# VL 在 examples/*/data/ 下生成的量化数据集 + vision 配置
+examples/**/data/llm/
+examples/**/data/vision/
+**/vision_config.json
 
 # HuggingFace 缓存（若放在仓库内）
 .cache/
