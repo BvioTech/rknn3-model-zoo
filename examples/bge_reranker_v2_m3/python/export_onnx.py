@@ -14,16 +14,34 @@ from transformers import AutoModelForSequenceClassification, AutoTokenizer, Auto
 # 与 Qwen3-Reranker(decoder-only,走 load_llm 流式)架构完全不同,这里走标准 ONNX 路线。
 
 class RerankerWrapper(torch.nn.Module):
-    """只暴露 (input_ids, attention_mask) -> score[1],去掉 HF 输出对象,方便 ONNX 导出 / RKNN 加载。"""
+    """只暴露 (inputs_embeds, attention_mask, position_ids) -> score[1]。
+
+    关键(RK1828 固件约束):**词向量查表(word_embeddings Gather, 250002x1024)放到 host 端做**,
+    模型图以 inputs_embeds 为输入,图里**没有大表 Gather**。原因:RK1828 NPU 固件无法在片上做
+    这么大的 embedding Gather,带它的模型会在 model_init 阶段 MODEL_SETUP fail(实测;小表 Gather
+    如 position/token_type 514x1024 没问题)。这与 LLM 路线用 .embed.bin + host 回调查表同理。
+
+    position_ids 也作为显式输入喂入(去掉内部从 attention_mask 推 position 的 CumSum;CumSum 落 CPU
+    段同样会让 RK1828 MODEL_SETUP fail)。两者都由板端 host 预算后喂入(见 README)。
+    """
 
     def __init__(self, model):
         super().__init__()
         self.model = model
 
-    def forward(self, input_ids, attention_mask):
-        out = self.model(input_ids=input_ids, attention_mask=attention_mask, return_dict=True)
+    def forward(self, inputs_embeds, attention_mask, position_ids):
+        out = self.model(inputs_embeds=inputs_embeds, attention_mask=attention_mask,
+                         position_ids=position_ids, return_dict=True)
         # logits: [batch, 1] -> [batch]
         return out.logits.view(-1)
+
+
+def make_position_ids(input_ids, padding_idx):
+    """复刻 transformers create_position_ids_from_input_ids:
+        mask = (input_ids != padding_idx); pos = cumsum(mask)*mask + padding_idx
+    板端推理须用**同一**公式预算 position_ids。"""
+    mask = input_ids.ne(padding_idx).to(torch.int64)
+    return torch.cumsum(mask, dim=1) * mask + padding_idx
 
 
 def main():
@@ -63,20 +81,33 @@ def main():
         padding="max_length", truncation=True, max_length=L, return_tensors="pt")
     input_ids = enc["input_ids"].to(torch.int64)
     attention_mask = enc["attention_mask"].to(torch.int64)
+    padding_idx = config.pad_token_id if config.pad_token_id is not None else 1
+    position_ids = make_position_ids(input_ids, padding_idx)
 
     out_dir = os.path.dirname(os.path.abspath(args.export_onnx_path))
     os.makedirs(out_dir, exist_ok=True)
 
-    with torch.no_grad():
-        ref = wrapper(input_ids, attention_mask)
-    print(f"  sanity score (raw logit) = {ref.tolist()}  sigmoid = {torch.sigmoid(ref).tolist()}")
+    # 词向量表(host 查表用):导出为 fp16 raw,板端按 [vocab, hidden] 读取后用 input_ids 索引。
+    word_emb = model.roberta.embeddings.word_embeddings.weight.detach()  # [vocab, hidden]
+    vocab, hidden = word_emb.shape
+    embed_path = os.path.join(out_dir, os.path.basename(args.export_onnx_path).rsplit(".", 1)[0] + ".embed.bin")
+    word_emb.to(torch.float16).cpu().numpy().tofile(embed_path)
+    print(f"--> Word-embedding table saved to {embed_path}  (vocab={vocab}, hidden={hidden}, fp16)")
 
-    print(f"--> Exporting ONNX (seq_len={L}, opset={args.opset}) -> {args.export_onnx_path}")
+    # dummy inputs_embeds = 用 host 查表(与板端一致):word_emb[input_ids]
+    inputs_embeds = torch.nn.functional.embedding(input_ids, word_emb).to(torch.float32)
+
+    with torch.no_grad():
+        ref = wrapper(inputs_embeds, attention_mask, position_ids)
+    print(f"  sanity score (raw logit) = {ref.tolist()}  sigmoid = {torch.sigmoid(ref).tolist()}")
+    print(f"  padding_idx={padding_idx} (position_ids 显式输入,板端须用同公式预算)")
+
+    print(f"--> Exporting ONNX (seq_len={L}, hidden={hidden}, opset={args.opset}) -> {args.export_onnx_path}")
     torch.onnx.export(
         wrapper,
-        (input_ids, attention_mask),
+        (inputs_embeds, attention_mask, position_ids),
         args.export_onnx_path,
-        input_names=["input_ids", "attention_mask"],
+        input_names=["inputs_embeds", "attention_mask", "position_ids"],
         output_names=["score"],
         opset_version=args.opset,
         do_constant_folding=True,
@@ -89,7 +120,9 @@ def main():
         tokenizer.save_pretrained(tok_dir)
         print(f"--> Tokenizer saved to {tok_dir}")
 
-    print("\n板端推理需要: 上面的 .rknn  +  tokenizer/  (HF tokenizer, max_length={} padding)".format(L))
+    print("\n板端推理需要: .rknn + .weight + {} + tokenizer/  (max_length={} padding)".format(
+        os.path.basename(embed_path), L))
+    print("  host 端用 .embed.bin 查表得 inputs_embeds,并用 make_position_ids 预算 position_ids 后喂入")
 
 
 if __name__ == "__main__":

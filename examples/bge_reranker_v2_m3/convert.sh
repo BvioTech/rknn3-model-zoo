@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 # convert.sh — BAAI/bge-reranker-v2-m3 一键转换(PC 端,x86_64,无需目标板)
 #
-#   1) export_onnx.py  HF 模型 → .onnx (+ tokenizer/)   [固定 seq_len,默认 512]
-#   2) export_rknn.py  .onnx → .rknn                     [默认 fp16,不量化]
+#   1) export_onnx.py  HF 模型 → .onnx (+ .embed.bin + tokenizer/)   [固定 seq_len,默认 512]
+#   2) export_rknn.py  .onnx → .rknn / .weight                       [默认 fp16,不量化]
 #
-# bge-reranker-v2-m3 是 XLM-RoBERTa encoder(输入 input_ids+attention_mask,输出单个相关性
-# 分数),与 Qwen3-Reranker(decoder-only,走 load_llm 流式)是两套不同路线;这里走标准
-# load_onnx+build。复用仓库根 .venv(full toolkit,torch 2.7 / transformers 4.51.3)。
-# 详见本目录 README.md。
+# bge-reranker-v2-m3 是 XLM-RoBERTa encoder(输出单个相关性分数),与 Qwen3-Reranker
+# (decoder-only,走 load_llm 流式)是两套不同路线;这里走标准 load_onnx+build。
+# ⚠️ RK1828 固件约束:词向量查表(250002x1024 大表 Gather)放 host 端做 —— 模型图以
+#    inputs_embeds 为输入,词表导出为 .embed.bin;position_ids 也由 host 预算后显式喂入
+#    (去掉内部 CumSum)。否则板端 MODEL_SETUP fail。详见 README.md。
+# 复用仓库根 .venv(full toolkit,torch 2.7 / transformers 4.51.3)。
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -124,10 +126,11 @@ fi
 
 echo ""; echo "════════════════════════════════════════════════════════"
 echo " 产物 ($OUTDIR):"
-for f in "$NAME.onnx" "$NAME.rknn" "$NAME.weight"; do
+for f in "$NAME.onnx" "$NAME.rknn" "$NAME.weight" "$NAME.embed.bin"; do
     [[ -f "$OUTDIR/$f" ]] && printf "   ✓ %-28s %s\n" "$f" "$(du -h "$OUTDIR/$f" | cut -f1)" \
                           || printf "   · %-28s (未生成)\n" "$f"
 done
 [[ -d "$OUTDIR/tokenizer" ]] && printf "   ✓ %-28s %s\n" "tokenizer/" "$(du -sh "$OUTDIR/tokenizer" | cut -f1)"
 echo "════════════════════════════════════════════════════════"
-echo " 部署到板子需要: .rknn  +  .weight  +  tokenizer/  (按 seq_len=$SEQ_LEN padding)"
+echo " 部署到板子需要: .rknn + .weight + .embed.bin + tokenizer/  (按 seq_len=$SEQ_LEN padding)"
+echo " host 端:用 .embed.bin 查表得 inputs_embeds,并预算 position_ids 后喂入(见 README)"
