@@ -69,8 +69,12 @@ if __name__ == '__main__':
     print('done')
 
     # Build model
-    print('--> Building model')
-    ret = rknn.build(do_quantization=True)
+    # 完整版(no_prune)vision 塔走 fp16(不量化)以保质量——w4a16 'normal' 量化会显著劣化
+    # 色彩/细节(实测：彩色图被当成黑白、幻觉出九宫格重复)。与 InternVLM / Janus_Pro 的
+    # vision 导出一致(do_quantization=False)。裁剪版仍用 w4a16 以省内存。
+    do_quant = bool(args.prune_mode)
+    print(f'--> Building model (do_quantization={do_quant})')
+    ret = rknn.build(do_quantization=do_quant)
     if ret != 0:
         print('Build model failed!')
         exit(ret)
