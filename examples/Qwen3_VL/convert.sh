@@ -16,6 +16,10 @@
 #    注意两个易漏依赖:
 #      torchvision —— llm 量化数据集走 AutoProcessor，缺它报 "AutoVideoProcessor requires Torchvision"。
 #      onnxscript  —— torch>=2.9 的 dynamo ONNX 导出需要，缺它报 "No module named 'onnxscript'"。
+#    ⚠️ 用 --quant (LLM AWQ+GRQ, 需 CUDA) 时, 这个 venv 还要补 GPU 量化依赖 (与主 .venv 同一套):
+#      pip install datasets 'peft==0.15.2' 'optimum==1.26.1' modelscope
+#      BUILD_CUDA_EXT=0 pip install --no-build-isolation 'auto_gptq==0.7.1'   # 避开 nvcc 编译; 仅导出 GPTQ 不需推理 kernel
+#      实测与 transformers==4.57.1 共存无冲突 (不降级 transformers)。datasets 缺失报 "cannot import name load_dataset"。
 #
 # ⚠️ 开箱即用仅覆盖 2B:llm/export_rknn.py 的 dynamic_input 按 onnx 文件名含 "2b"/"4b" 选择,
 #    且 mrope_section 硬编码为 2B 的 [24,20,20]。转 4B 需按 config.json 改 mrope_section。

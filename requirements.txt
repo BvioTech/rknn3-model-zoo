@@ -24,6 +24,7 @@ torch>=2.6.0,<2.9.0
 transformers==4.51.3
 optimum==1.26.1
 peft==0.15.2
+datasets   # export_llm.py --quant 的 GRQ 量化 (rknn.utils.grq) 需要 load_dataset；缺它会 ImportError
 
 protobuf>=4.21.6,<=4.25.4
 
