@@ -1630,6 +1630,15 @@ class Gemma4TextModel(Gemma4PreTrainedModel):
             position_ids = torch.arange(inputs_embeds.shape[1], device=inputs_embeds.device) + past_seen_tokens
             position_ids = position_ids.unsqueeze(0)
 
+        # NOTE(violoop): *_global / *_local 是为 RKNN ONNX 导出新增的入参，只有导出 wrapper 会喂。
+        # 走标准调用时（如 RKQuantizer 做 GRQ 校准的 model(input_ids=...)）它们为 None，
+        # 下面的 rotary_emb 会崩在 .shape 上。回退到标准 position_ids；attention_mask 的回退
+        # 见下方 causal_mask_mapping_rknn。行为与原版 Gemma-4 一致；导出路径显式传值不受影响。
+        if position_ids_global is None:
+            position_ids_global = position_ids
+        if position_ids_local is None:
+            position_ids_local = position_ids
+
         # It may already have been prepared by e.g. `generate`
         if not isinstance(causal_mask_mapping := attention_mask, dict):
             # Prepare mask arguments
@@ -1655,26 +1664,32 @@ class Gemma4TextModel(Gemma4PreTrainedModel):
             elif layer_type == "sliding_attention":
                 position_embeddings[layer_type] = self.rotary_emb(hidden_states, position_ids_local, layer_type)
 
-        mask_kwargs_global = {
-            "config": self.config,
-            "inputs_embeds": inputs_embeds,
-            "attention_mask": attention_mask_global,
-            "past_key_values": past_key_values,
-            "position_ids": position_ids_global,
-        }
-        mask_kwargs_local = {
-            "config": self.config,
-            "inputs_embeds": inputs_embeds,
-            "attention_mask": attention_mask_local,
-            "past_key_values": past_key_values,
-            "position_ids": position_ids_local,
-        }
+        if attention_mask_global is None or attention_mask_local is None:
+            # NOTE(violoop): 标准调用（如 RKQuantizer 的 GRQ 校准）不会喂 *_global/*_local。
+            # 此时直接复用上面按原版逻辑准备好的 causal_mask_mapping —— 注意传入的
+            # attention_mask 可能本身就是父模块（Gemma4Model）算好的 dict，不能当原始 2D mask 用。
+            causal_mask_mapping_rknn = causal_mask_mapping
+        else:
+            mask_kwargs_global = {
+                "config": self.config,
+                "inputs_embeds": inputs_embeds,
+                "attention_mask": attention_mask_global,
+                "past_key_values": past_key_values,
+                "position_ids": position_ids_global,
+            }
+            mask_kwargs_local = {
+                "config": self.config,
+                "inputs_embeds": inputs_embeds,
+                "attention_mask": attention_mask_local,
+                "past_key_values": past_key_values,
+                "position_ids": position_ids_local,
+            }
 
-        # Create the masks
-        causal_mask_mapping_rknn = {
-            "full_attention": create_causal_mask(**mask_kwargs_global),
-            "sliding_attention": create_sliding_window_causal_mask(**mask_kwargs_local),
-        }
+            # Create the masks
+            causal_mask_mapping_rknn = {
+                "full_attention": create_causal_mask(**mask_kwargs_global),
+                "sliding_attention": create_sliding_window_causal_mask(**mask_kwargs_local),
+            }
 
         position_embeddings_global = position_embeddings['full_attention']
         position_embeddings_local = position_embeddings['sliding_attention']

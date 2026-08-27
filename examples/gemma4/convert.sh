@@ -23,6 +23,7 @@ LLM_DIR="$SCRIPT_DIR/python/llm"
 PY="${GEMMA_PY:-$REPO_ROOT/.venv-gemma/bin/python}"
 
 MTYPE="e4b"             # e2b | e4b
+MODEL_OVERRIDE=""       # 本地权重目录或自定义 repo id
 PLATFORM="rk1828"
 OUTDIR="$SCRIPT_DIR/model/llm"
 QUANT=""
@@ -38,6 +39,7 @@ usage() {
 
 选项:
   -t, --model-type T  e2b | e4b (默认 e4b)
+  -m, --model PATH    本地权重目录或自定义 repo id (默认按 -t 取 google/gemma-4-Exx-it)
   -p, --platform P    目标平台 (默认 rk1828;原脚本写死 rk1820)
       --py PATH       Gemma 专用 venv 的 python (默认 <repo>/.venv-gemma/bin/python 或 $GEMMA_PY)
   -o, --outdir DIR    产物输出目录 (默认 ./model/llm)
@@ -51,6 +53,7 @@ usage() {
 
 示例:
   ./convert.sh --model-type e4b
+  ./convert.sh -t e4b -m /root/autodl-tmp/gemma-4-E4B-it --quant   # 用已下好的本地权重
   ./convert.sh --py ../../.venv-gemma/bin/python -t e4b --proxy http://localhost:7897
 EOF
 }
@@ -58,6 +61,7 @@ EOF
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -t|--model-type) MTYPE="$2"; shift 2 ;;
+        -m|--model)      MODEL_OVERRIDE="$2"; shift 2 ;;
         -p|--platform)   PLATFORM="$2"; shift 2 ;;
         --py)            PY="$2"; shift 2 ;;
         -o|--outdir)     OUTDIR="$2"; shift 2 ;;
@@ -78,6 +82,7 @@ case "$MTYPE" in
     e4b) MODEL="google/gemma-4-E4B-it"; NAME="gemma-4-e4b-it" ;;
     *)   echo "✗ --model-type 只能是 e2b 或 e4b" >&2; exit 2 ;;
 esac
+[[ -n "$MODEL_OVERRIDE" ]] && MODEL="$MODEL_OVERRIDE"
 
 ONNX="$OUTDIR/$NAME.onnx"
 CONFIG="$OUTDIR/$NAME.config.pkl"
